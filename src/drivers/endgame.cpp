@@ -7,8 +7,10 @@
 //     01 ok, 03 busy (read again), 08 / 11 mouse asleep or out of range.
 //   B4 (battery):    reply[16] = percent. No charging flag is decoded for this family.
 //   0E (mouse info): reply[16..17] = 67 33 (VID), reply[18..19] = mouse PID, little endian.
-//   0F (probe):      after a failed command the dongle stays silent until a 0F gets through, so we
-//                    send it only on failure (sending it every poll keeps the mouse from sleeping).
+//   0F (probe):      after a failed command (including 08 / 11 "mouse asleep") the dongle keeps
+//                    replying with that stale failure until a 0F gets through (vole PROTOCOL.md §14), so
+//                    whenever B4 fails we probe and ask once more. It is not sent on a successful poll
+//                    (sending it every poll keeps the mouse from sleeping).
 // Only these read commands are used; the write / reset / re-pair commands are never sent.
 // The older XM2we / OP1we "WE" family uses a different 17-byte protocol and is not handled here.
 #include "drivers.h"
@@ -56,11 +58,12 @@ void PollEndgame(PollContext& ctx) {
         if (!d.OpenFeatureOnly(*c)) continue;
         std::vector<BYTE> r;
         int st = Command(d, 0xB4, 0x00, r);
-        if (st != 0x01 && st != 0x08 && st != 0x11) {
-            // Unexpected status or no answer: probe the dongle and the mouse once, then retry.
+        if (st != 0x01) {
+            // Any failure, including 08 / 11, may be a stale reply left by an earlier failed command: the
+            // dongle repeats it until a probe succeeds. The mouse target answers even while the mouse is
+            // asleep, so probe it (then the dongle) and retry once.
             std::vector<BYTE> p;
-            Command(d, 0x0F, 0x01, p);
-            Command(d, 0x0F, 0x0F, p);
+            if (Command(d, 0x0F, 0x0F, p) != 0x01) Command(d, 0x0F, 0x01, p);
             st = Command(d, 0xB4, 0x00, r);
         }
         bool awake = st == 0x01 && r[16] <= 100;
