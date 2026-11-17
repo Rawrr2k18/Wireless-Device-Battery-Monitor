@@ -204,24 +204,26 @@ int PaQuery(HidDev& d, BYTE cmd) {
 }
 
 void PollBlackSharkV2Pro2023(PollContext& ctx) {
-    const USHORT pid = 0x0555;
-    if (ctx.IsClaimed(0x1532, pid)) return;
-    auto colls = ctx.Find(0x1532, pid, [](const HidColl& c) { return c.page() == 0xFF00 && c.outLen() >= 64 && c.inLen() >= 16; });
-    for (const HidColl* c : colls) {
-        HidDev d;
-        if (!d.Open(*c)) continue;
-        int level = PaQuery(d, 0x21);
-        if (level < 0 || level > 100) continue;
-        int charging = PaQuery(d, 0x2A);
-        DeviceStatus s;
-        s.key = L"blackshark:" + Hex4(pid);
-        s.name = L"Razer BlackShark V2 Pro (2023)";
-        s.kind = DeviceKind::Headset;
-        s.via = L"2.4 GHz receiver";
-        s.percent = level;
-        s.charging = charging > 0;
-        ctx.Add(s, 0x1532, pid);
-        return;
+    // 0555 = BlackShark V2 Pro (2023); 0A49 = BlackShark V2 Pro for Xbox, same HyperSpeed dongle protocol.
+    for (USHORT pid : { (USHORT)0x0555, (USHORT)0x0A49 }) {
+        if (ctx.IsClaimed(0x1532, pid)) continue;
+        auto colls = ctx.Find(0x1532, pid, [](const HidColl& c) { return c.page() == 0xFF00 && c.outLen() >= 64 && c.inLen() >= 16; });
+        for (const HidColl* c : colls) {
+            HidDev d;
+            if (!d.Open(*c)) continue;
+            int level = PaQuery(d, 0x21);
+            if (level < 0 || level > 100) continue;
+            int charging = PaQuery(d, 0x2A);
+            DeviceStatus s;
+            s.key = L"blackshark:" + Hex4(pid);
+            s.name = pid == 0x0A49 ? L"Razer BlackShark V2 Pro (Xbox)" : L"Razer BlackShark V2 Pro (2023)";
+            s.kind = DeviceKind::Headset;
+            s.via = L"2.4 GHz receiver";
+            s.percent = level;
+            s.charging = charging > 0;
+            ctx.Add(s, 0x1532, pid);
+            break;
+        }
     }
 }
 
