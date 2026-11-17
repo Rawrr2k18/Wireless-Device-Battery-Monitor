@@ -130,6 +130,20 @@ void SaveBoolSetting(const wchar_t* name, bool on) {
     RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, name, REG_DWORD, &v, sizeof(v));
 }
 
+// Last known level per device key, so an asleep / switched-off device still shows it after a restart.
+const wchar_t* kLastLevelsKey = L"Software\\WirelessBattery\\LastLevels";
+
+int LoadLastLevel(const std::wstring& key) {
+    DWORD v = 0, sz = sizeof(v);
+    if (RegGetValueW(HKEY_CURRENT_USER, kLastLevelsKey, key.c_str(), RRF_RT_REG_DWORD, nullptr, &v, &sz) != ERROR_SUCCESS) return -1;
+    return v <= 100 ? (int)v : -1;
+}
+
+void SaveLastLevel(const std::wstring& key, int pct) {
+    DWORD v = (DWORD)pct;
+    RegSetKeyValueW(HKEY_CURRENT_USER, kLastLevelsKey, key.c_str(), REG_DWORD, &v, sizeof(v));
+}
+
 bool LoadWidgetMode() { return LoadBoolSetting(L"TaskbarWidget", true); }
 void SaveWidgetMode(bool on) { SaveBoolSetting(L"TaskbarWidget", on); }
 bool LoadHideLastKnown() { return LoadBoolSetting(L"HideLastKnownDevices", false); }
@@ -406,8 +420,12 @@ void OnResults(std::vector<DeviceStatus>& results) {
     std::map<std::wstring, bool> seen;
     for (auto& s : results) {
         auto& e = g_entries[s.key];
-        if (!e.uid) e.uid = StableId(s.key);
+        if (!e.uid) {
+            e.uid = StableId(s.key);
+            e.lastPct = LoadLastLevel(s.key);
+        }
         e.st = s;
+        if (s.percent >= 0 && s.percent != e.lastPct) SaveLastLevel(s.key, s.percent);
         if (s.percent >= 0) e.lastPct = s.percent;
         e.lastSeen = GetTickCount64();
         seen[s.key] = true;
