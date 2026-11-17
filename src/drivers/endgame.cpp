@@ -12,6 +12,10 @@
 //                    whenever B4 fails we probe and ask once more. It is not sent on a successful poll
 //                    (sending it every poll keeps the mouse from sleeping).
 // Only these read commands are used; the write / reset / re-pair commands are never sent.
+// USB cable: the mouse then enumerates under its own PID with the same FF01:0002 config channel and
+// answers B4 directly (0F / 0D are refused with status 07; vole PROTOCOL.md §13). While charging the
+// battery byte is not a state of charge, so, like the vendor tool, below 100 we only report "charging"
+// (the tray keeps the last known level) and at 100 report full.
 // The older XM2we / OP1we "WE" family uses a different 17-byte protocol and is not handled here.
 #include "drivers.h"
 
@@ -50,8 +54,33 @@ int Command(HidDev& d, BYTE cmd, BYTE target, std::vector<BYTE>& r) {
 
 }  // namespace
 
+// Mouse on its USB cable. Uses the same key as the dongle entry so the tray shows one device that keeps
+// its last known level. Returns true when a cabled mouse answered.
+bool PollEndgameCable(PollContext& ctx) {
+    for (USHORT pid : { (USHORT)0x1972, (USHORT)0x1984, (USHORT)0x1968, (USHORT)0x1982 }) {
+        if (ctx.IsClaimed(kVid, pid)) continue;
+        for (const HidColl* c : ctx.Find(kVid, pid, [](const HidColl& c) { return c.page() == 0xFF01 && c.usage() == 0x0002 && c.featLen() >= 64; })) {
+            HidDev d;
+            if (!d.OpenFeatureOnly(*c)) continue;
+            std::vector<BYTE> r;
+            if (Command(d, 0xB4, 0x0F, r) != 0x01) continue;
+            DeviceStatus s;
+            s.key = L"endgame:" + Hex4(kDongle4K);
+            s.name = MouseName(pid);
+            s.kind = DeviceKind::Mouse;
+            s.via = L"USB cable";
+            if (r[16] >= 100) s.percent = 100;
+            else s.charging = true;  // percent stays unknown: the tray shows the last known level
+            ctx.Add(s, kVid, pid);
+            return true;
+        }
+    }
+    return false;
+}
+
 void PollEndgame(PollContext& ctx) {
     static std::map<std::wstring, const wchar_t*> lastName;  // by dongle path: the mouse only identifies itself while awake
+    if (PollEndgameCable(ctx)) return;  // the dongle would only report the cabled mouse as unreachable
     if (ctx.IsClaimed(kVid, kDongle4K)) return;
     for (const HidColl* c : ctx.Find(kVid, kDongle4K, [](const HidColl& c) { return c.page() == 0xFF01 && c.usage() == 0x0002 && c.featLen() >= 64; })) {
         HidDev d;
